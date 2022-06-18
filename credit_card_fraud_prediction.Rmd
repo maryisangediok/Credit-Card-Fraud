@@ -1,0 +1,391 @@
+---
+title: "Credit Card Fraud Prediction"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Project Objective
+* The objective of this project is to predict which credit card transactions in the dataset are fraudulent using three classification algorithms and three synthetic balancing techniques. The six classifier algorithms we will train include:
+  + Logistic Regression
+  + XGBoost
+  + Random Forest
+
+* Given that the objective is to evaluate the model performance of the three classifier algorithms and synthetic balancing techniques, we will not be thoroughly reviewing the model output, but rather will be focusing on the classification performance results.
+
+* Lets start by loading the R library packages that will be used in this project, which are the caret, corrplot, and smotefamily packages.
+
+```{r, echo=TRUE, results='hide'}
+#Load the packages used in the project
+library(caret)
+library(corrplot)
+library(smotefamily)
+```
+
+### Import the dataset
+
+Next, using the "read.csv" function, we will import the credit card fraud dataset and set the class to a factor. This dataset is a subset of the dataset from sourced from https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud, which includes anonymized credit card transactions.
+
+```{r}
+#A. Load the dataset
+loc <- file.choose()
+loc
+creditcardFraud <- read.csv(loc, header=1)
+
+#B. Change class to factor the as.factor function encodes the vector as a factor or category
+creditcardFraud$class<-as.factor(creditcardFraud$class)
+```
+
+## Explore The Data
+
+* Now that we have downloaded the data we can start the training of the models, but it is important that we first understand and explore our data as it helps us identify potential data quality issues and it provides us the needed context to develop an appropriate model.  
+
+* In this project, we will briefly explore the data and perform a high-level exploratory data analysis (EDA) of the dataset
+
+```{r}
+#A. Structure of the dataset
+str(creditcardFraud)
+
+
+#B. Missing data?
+sum(is.na(creditcardFraud))
+
+#C. Check the imbalance in the dataset
+summary(creditcardFraud$class)
+table(creditcardFraud$class)
+prop.table(table(creditcardFraud$class))
+
+#D. Compile histograms for each variable
+par(mfrow = c(3,5)) #Change setting to view 3x5 charts
+i <- 1
+for (i in 1:30) 
+{hist((creditcardFraud[,i]), main = paste("Distibution of ", colnames(creditcardFraud[i])), xlab = colnames(creditcardFraud[i]), col = "light blue")
+}
+
+#E. Compute the correlations among the variables
+r <- cor(creditcardFraud[,1:30]) 
+
+```
+
+## Split the Data into Training and Test Sets
+
+It is important that when we evaluate the performance of a model, we do so on a dataset that the model has not previously seen. Therefore, we will split our dataset into a training dataset and a test dataset and to maintain the same level of imbalance as in the original dataset, we will use stratified sampling by "class."
+
+* Training Dataset: This is the random subset of your data used to initially fit (or train) your model.
+
+* Test Dataset: This dataset used to provide an unbiased evaluation of the model fit on the training dataset.
+
+```{r}
+#A. Split data into training and testing dataset used for model building (training dataset) 
+set.seed(1337)
+train <- createDataPartition(creditcardFraud$class,
+                             p=.70,
+                             times=1,
+                             list=F)
+
+train.orig <- creditcardFraud[train,]
+test <- creditcardFraud[-train,]
+
+
+
+#B. Check the proportion of observations allocated to each group
+dim(train.orig)/dim(creditcardFraud)
+dim(test)/dim(creditcardFraud)
+
+
+#C. Class balance for training dataset
+prop.table(table(train.orig$class))
+
+
+
+#D. Class balance for test dataset
+prop.table(table(test$class))
+
+```
+
+## Compile Synthetically Balanced Training Datsets
+
+Now that we have split our dataset into a training and test dataset, lets create three new synthetically balanced datasets from the one imbalanced training dataset. To do this we will be using the "smotefamily" R package and we will be trying out three different techniques: SMOTE. Below is a brief description:
+
+* SMOTE (Synthetic Minority Oversampling Technique): A subset of data is taken from the minority class as an example. New synthetic similar examples are generated from the “feature space” rather than the “data space.”
+
+```{r, echo=TRUE, results='asis', include=TRUE}
+#SMOTE Balanced
+train.smote <- SMOTE(train.orig[,-31],train.orig[,31],K=5)
+names(train.smote)
+train.smote <- train.smote$data #extract only the balanced sheet
+train.smote$class <- as.factor(train.smote$class)
+
+```
+
+### Evaluate Class distributions for Synthetic datasets
+```{r}
+#Class Distribution of SMOTE Balanced Dataset
+prop.table(table(train.smote$class))
+
+```
+## Original Data: Train Logistic Regression, XGBoost, and Random Forest Models
+
+Now that we have our four training datasets; 
+
+1. the original imbalanced training dataset, 
+
+2. the SMOTE balanced training dataset, 
+
+We will use the 'caret' package to train three classifier models (logistic regression, xgboost, random forest). Lets start by fitting the three classifier models using the original imbalanced training dataset.  We will use repeated 5x cross validation for our models across all of our trained models.
+
+```{r}
+#A. Global options that we will use across all of our trained models
+ctrl <- trainControl(method = "cv", 
+                     number = 5, 
+                     classProbs = TRUE, 
+                     summaryFunction = twoClassSummary)
+
+#B. Logistic Regression: original data
+lr_orig <- train(class ~ .,
+                 data = train.orig,
+                 method = "glm",
+                 trControl = ctrl,
+                 metric = "ROC")
+
+#D. XGBoost: original data
+xgb_orig <- train(class ~ .,
+                 data = train.orig,
+                 method = "xgbTree",
+                 trControl = ctrl,
+                 verbose = FALSE,
+                 metric = "ROC")
+
+#E. Random Forest: original data
+rf_orig <- train(class ~ .,
+                 data = train.orig,
+                 method = "rf",
+                 trControl = ctrl,
+                 metric = "ROC")
+
+```
+### Compile Classifications on Test Data using models trained on the original imbalanced training dataset
+
+Next, we will use the models we have trained using the original imbalanced training dataset to generate predictions on the test dataset. 
+
+* We will then compile three measures of performance, which we will use to compare the performance of the models across all of our trained models: 
+  + Precision = TP / (TP+FP) - measures proportion of positive cases that are truly positive
+  + Recall = TP / (TP+FN) - measures how complete the results are. This is often also called the senSitivity
+  + F1 measure = (2xPrecision*Recall)/(Recall+Precision) - this combines the precision and recall into a single number
+```{r}
+###################################################
+#Logistic Regression Model - Trained on original dataset#
+###################################################
+#A. Logistic Regression Model predictions
+lr_orig_pred <- predict(lr_orig, test, type="prob")
+
+#B. Logistic Regression - Assign class to probabilities
+lr_orig_test <- factor(ifelse(lr_orig_pred$yes > 0.50, 'yes', 'no'))
+
+#C. Logistic Regression Save Precision/Recall/F
+precision_lrOrig <- posPredValue(lr_orig_test, test$class, positive = 'yes')
+recall_lrOrig <- sensitivity(lr_orig_test, test$class, positive = 'yes')
+F1_lrOrig <- (2*precision_lrOrig*recall_lrOrig)/ (precision_lrOrig+recall_lrOrig)
+
+
+###################################################
+#XGBoost Model - Trained on original dataset#
+###################################################
+#A. XGBoost Model predictions
+xgb_orig_pred <- predict(xgb_orig, test, type="prob")
+
+#B. XGBoost - Assign class to probabilities
+xgb_orig_test <- factor(ifelse(xgb_orig_pred$yes > 0.50, 'yes', 'no'))
+
+#C. XGBoost Save Precision/Recall/F
+precision_xgbOrig <- posPredValue(xgb_orig_test, test$class, positive = 'yes')
+recall_xgbOrig <- sensitivity(xgb_orig_test, test$class, positive = 'yes')
+F1_xgbOrig <- (2*precision_xgbOrig*recall_xgbOrig)/ (precision_xgbOrig+recall_xgbOrig)
+
+
+###################################################
+#Random Forest Model - Trained on original dataset#
+###################################################
+#A. Random Forest Model predictions
+rf_orig_pred <- predict(rf_orig, test, type="prob")
+
+#B. Random Forest - Assign class to probabilities
+rf_orig_test <- factor(ifelse(rf_orig_pred$yes > 0.50, 'yes', 'no'))
+
+#C. Random Forest Save Precision/Recall/F
+precision_rfOrig <- posPredValue(rf_orig_test, test$class, positive = 'yes')
+recall_rfOrig <- sensitivity(rf_orig_test, test$class, positive = 'yes')
+F1_rfOrig <- (2*precision_rfOrig*recall_rfOrig)/ (precision_rfOrig+recall_rfOrig)
+
+```
+
+## SMOTE Balanced Data: Train Logistic Regression, XGBoost, and Random Forest Models
+
+Next, We will train the three classifier models using the SMOTE balanced training dataset.
+
+```{r}
+
+#A. Logistic Regression: SMOTE data
+lr_smote <- train(class ~ .,
+                 data=train.smote,
+                 method = "glm",
+                 trControl = ctrl,
+                 metric = "ROC")
+
+#B. XGBoost: SMOTE data
+xgb_smote <- train(class ~ .,
+                 data=train.smote,
+                 method = "xgbDART",
+                 trControl = ctrl,
+                 verbose = FALSE,
+                 metric = "ROC")
+
+#C. Random Forest: SMOTE data
+rf_smote <- train(class ~ .,
+                 data=train.smote,
+                 method = "rf",
+                 trControl = ctrl,
+                 metric = "ROC")
+
+
+```
+
+### Compile predictions using models trained on the SMOTE balanced training dataset
+
+Next, we will use the models we have trained using the SMOTE balanced training dataset to generate predictions on the test dataset, and we will compute our three performance measures.
+
+```{r}
+################################################
+#Logistic Regression Model - Trained on SMOTE dataset#
+################################################
+#A. Logistic Regression Model predictions
+lr_smote_pred <- predict(lr_smote, test, type="prob")
+
+#B. Logistic Regression - Assign class to probabilities
+lr_smote_test <- factor(ifelse(lr_smote_pred$yes > 0.50, 'yes', 'no'))
+
+#C. Logistic Regression Save Precision/Recall/F
+precision_lrsmote <- posPredValue(lr_smote_test, test$class, positive = 'yes')
+recall_lrsmote <- sensitivity(lr_smote_test, test$class, positive = 'yes')
+F1_lrsmote <- (2*precision_lrsmote*recall_lrsmote)/ (precision_lrsmote+recall_lrsmote)
+
+
+##############################################
+#XGBoost Model - Trained on SMOTE dataset#
+##############################################
+#A. XGBoost Model predictions
+xgb_smote_pred <- predict(xgb_smote, test, type="prob")
+
+#B. XGBoost - Assign class to probabilities
+xgb_smote_test <- factor(ifelse(xgb_smote_pred$yes > 0.50, 'yes', 'no'))
+
+#C. XGBoost Save Precision/Recall/F
+precision_xgbsmote <- posPredValue(xgb_smote_test, test$class, positive = 'yes')
+recall_xgbsmote <- sensitivity(xgb_smote_test, test$class, positive = 'yes')
+F1_xgbsmote <- (2*precision_xgbsmote*recall_xgbsmote)/ (precision_xgbsmote+recall_xgbsmote)
+
+
+######################################
+#Random Forest Model - Trained on SMOTE dataset#
+######################################
+#A. Random Forest Model predictions
+rf_smote_pred <- predict(rf_smote, test, type="prob")
+
+#B. Random Forest - Assign class to probabilities
+rf_smote_test <- factor(ifelse(rf_smote_pred$yes > 0.50, 'yes', 'no'))
+
+#C. Random Forest Save Precision/Recall/F
+precision_rfsmote <- posPredValue(rf_smote_test, test$class, positive = 'yes')
+recall_rfsmote <- sensitivity(rf_smote_test, test$class, positive = 'yes')
+F1_rfsmote <- (2*precision_rfsmote*recall_rfsmote)/ (precision_rfsmote+recall_rfsmote)
+
+```
+
+
+## Compare the model performance 
+
+We will compare the recall, precision, and F1 performance measures for each of the three models we trained using the four training datasets: 
+
+1. original imbalanced, 
+2. SMOTE balanced,
+
+Recall that the most important performance measure for the fraud problem is the recall, which measures how complete our results are indicating the model captures more of the fraudulent transactions.
+
+```{r}
+#Lets reset the chart settings so we see one chart at a time
+par(mfrow = c(1,1))
+
+#Compare the Recall of the models: TP / TP + FN. To do that, we'll need to combine our results into a dataframe[note update the names of the recall object if you used different names]
+model_compare_recall <- data.frame(Model = c('LR-Orig',
+                                      'XGB-Orig',
+                                      'RF-Orig',
+                                      'LR-SMOTE',
+                                      'XGB-SMOTE',
+                                      'RF-SMOTE'),
+                            Recall = c(recall_lrOrig,
+                                   recall_xgbOrig,
+                                   recall_rfOrig,
+                                   recall_lrsmote,
+                                   recall_xgbsmote,
+                                   recall_rfsmote))
+
+ggplot(aes(x=reorder(Model,-Recall) , y=Recall), data=model_compare_recall) +
+  geom_bar(stat='identity', fill = 'light blue') +
+  ggtitle('Comparative Recall of Models on Test Data') +
+  xlab('Models')  +
+  ylab('Recall Measure')+
+  geom_text(aes(label=round(Recall,2)))+
+  theme(axis.text.x = element_text(angle = 40))
+
+#Compare the Precision of the models: TP/TP+FP [note update the names of the precision object if you used different names]
+model_compare_precision <- data.frame(Model = c('LR-Orig',
+                                      'XGB-Orig',
+                                      'RF-Orig',
+                                      'LR-SMOTE',
+                                      'XGB-SMOTE',
+                                      'RF-SMOTE'),
+                              Precision = c(precision_lrOrig,
+                                         precision_xgbOrig,
+                                         precision_rfOrig,
+                                         precision_lrsmote,
+                                         precision_xgbsmote,
+                                         precision_rfsmote))
+
+ggplot(aes(x=reorder(Model,-Precision) , y=Precision), data=model_compare_precision) +
+  geom_bar(stat='identity', fill = 'light green') +
+  ggtitle('Comparative Precision of Models on Test Data') +
+  xlab('Models')  +
+  ylab('Precision Measure')+
+  geom_text(aes(label=round(Precision,2)))+
+  theme(axis.text.x = element_text(angle = 40))
+
+
+#Compare the F1 of the models: 2*((Precision*Recall) / (Precision + Recall)) [note update the names of the F1 object if you used different names]
+model_compare_f1 <- data.frame(Model = c('LR-Orig',
+                                      'XGB-Orig',
+                                      'RF-Orig',
+                                      'LR-SMOTE',
+                                      'XGB-SMOTE',
+                                      'RF-SMOTE'),
+                              F1 = c(F1_lrOrig,
+                                     F1_xgbOrig,
+                                     F1_rfOrig,
+                                     F1_lrsmote,
+                                     F1_xgbsmote,
+                                     F1_rfsmote))
+
+ggplot(aes(x=reorder(Model,-F1) , y=F1), data=model_compare_f1) +
+  geom_bar(stat='identity', fill = 'light grey') +
+  ggtitle('Comparative F1 of Models on Test Data') +
+  xlab('Models')  +
+  ylab('F1 Measure')+
+  geom_text(aes(label=round(F1,2)))+
+  theme(axis.text.x = element_text(angle = 40))
+
+```
+
